@@ -10,6 +10,7 @@ import os
 import requests
 from datetime import datetime
 import json
+import traceback
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Android app
@@ -32,7 +33,20 @@ def home():
         'service': 'EEG AI Analysis Server',
         'version': '1.0',
         'timestamp': datetime.now().isoformat(),
-        'ai_provider': 'Anthropic Claude' if USE_ANTHROPIC else 'OpenAI GPT'
+        'ai_provider': 'Anthropic Claude' if USE_ANTHROPIC else 'OpenAI GPT',
+        'api_key_set': bool(ANTHROPIC_API_KEY if USE_ANTHROPIC else OPENAI_API_KEY)
+    })
+
+
+@app.route('/api/test', methods=['GET'])
+def test():
+    """Test endpoint to verify configuration"""
+    return jsonify({
+        'status': 'ok',
+        'anthropic_api_key_set': bool(ANTHROPIC_API_KEY),
+        'anthropic_api_key_length': len(ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else 0,
+        'use_anthropic': USE_ANTHROPIC,
+        'openai_api_key_set': bool(OPENAI_API_KEY)
     })
 
 
@@ -120,9 +134,14 @@ Keep the response concise, supportive, and helpful."""
         })
     
     except Exception as e:
+        # Log the full error
+        print(f"ERROR in analyze_eeg_data: {str(e)}")
+        print(traceback.format_exc())
+        
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'traceback': traceback.format_exc()
         }), 500
 
 
@@ -180,36 +199,53 @@ Provide a brief, friendly answer (2-3 sentences max)."""
         })
     
     except Exception as e:
+        # Log the full error
+        print(f"ERROR in ask_question: {str(e)}")
+        print(traceback.format_exc())
+        
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'traceback': traceback.format_exc()
         }), 500
 
 
 def call_claude_api(prompt):
     """Call Anthropic Claude API"""
-    headers = {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-    }
-    
-    payload = {
-        'model': 'claude-sonnet-4-20250514',
-        'max_tokens': 1000,
-        'messages': [
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ]
-    }
-    
-    response = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=30)
-    response.raise_for_status()
-    
-    data = response.json()
-    return data['content'][0]['text']
+    try:
+        headers = {
+            'Content-Type': 'application/json',
+            'x-api-key': ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01'
+        }
+        
+        payload = {
+            'model': 'claude-sonnet-4-20250514',
+            'max_tokens': 1000,
+            'messages': [
+                {
+                    'role': 'user',
+                    'content': prompt
+                }
+            ]
+        }
+        
+        print(f"Calling Claude API...")
+        response = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=30)
+        
+        print(f"Claude API response status: {response.status_code}")
+        
+        if not response.ok:
+            error_text = response.text
+            print(f"Claude API error: {error_text}")
+            raise Exception(f"Claude API error ({response.status_code}): {error_text}")
+        
+        data = response.json()
+        return data['content'][0]['text']
+        
+    except Exception as e:
+        print(f"ERROR calling Claude API: {str(e)}")
+        raise
 
 
 def call_openai_api(prompt):
@@ -384,4 +420,7 @@ def answer_offline(question):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    print(f"Starting server on port {port}")
+    print(f"Anthropic API Key set: {bool(ANTHROPIC_API_KEY)}")
+    print(f"Use Anthropic: {USE_ANTHROPIC}")
     app.run(host='0.0.0.0', port=port, debug=False)
